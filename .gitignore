@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+models/
+data/Lesson_Learned_Sample.xlsx
+data/Lesson_Learned_Sample.xls
+data/Lesson_Learned_Sample.csv
+data/~$Lesson_Learned_Sample.xlsx
+data/sample_lessons.xlsx
+data/sample_jobs.xlsx
+data/*.tmp
+storage/*.npy
+storage/*.json
+storage/*.md
