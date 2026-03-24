@@ -1,14 +1,14 @@
 # Recruitment Assessment: RAG-based Chatbot
 
-A modular Retrieval-Augmented Generation (RAG) chatbot that answers questions from the provided lesson-learned dataset.
+A modular Retrieval-Augmented Generation (RAG) chatbot that answers questions from the provided FAQ knowledge base.
 
-This repository is configured to use generated sample data for demos and GitHub submission. The confidential company Excel file is not required for the public version.
+The current pipeline uses `data/FAQ.docx` as the main retrieval source.
 
 Local embedding model files under `models/` are optional runtime artifacts and should not be committed to GitHub.
 
 ## Features
 
-- Document ingestion pipeline for `.csv` and `.xlsx`
+- Document ingestion pipeline for `.docx` (FAQ), with `.csv`/`.xlsx` fallback support
 - Text chunking with overlap
 - Embedding generation using `sentence-transformers` (with offline local hashing fallback)
 - Local vector store using NumPy (cosine similarity retrieval)
@@ -26,8 +26,8 @@ Local embedding model files under `models/` are optional runtime artifacts and s
 ├── README.md
 ├── .env.example
 ├── data/
-│   ├── create_sample_data.py
-│   └── sample_lessons.xlsx        # generated locally from safe sample data
+│   ├── FAQ.docx
+│   └── create_sample_data.py      # optional utility, not used by default pipeline
 ├── scripts/
 │   └── build_index.py
 ├── storage/                  # generated index files
@@ -65,23 +65,13 @@ Then set values in `.env`:
 - `GEMINI_MODEL=gemini-2.5-flash`
 - Optional: `TOP_K`, `EMBEDDING_MODEL`
 
-4. Generate safe sample data:
-
-```bash
-python data/create_sample_data.py
-```
-
-This creates public demo files in the `data/` folder and avoids using the confidential source spreadsheet.
-
-The generated sample Excel files do not need to be committed because they can be recreated from [data/create_sample_data.py](data/create_sample_data.py).
-
 ## Build Vector Index
 
 ```bash
 python scripts/build_index.py
 ```
 
-The pipeline will prefer `data/sample_lessons.xlsx` and auto-generate it if missing.
+The pipeline will load `data/FAQ.docx` by default.
 
 This creates:
 
@@ -105,6 +95,11 @@ Open the local Streamlit URL shown in terminal.
 - Deploy on Streamlit Cloud or Hugging Face Spaces and share the URL.
 - Do not commit the confidential lesson-learned spreadsheet. It is excluded in [.gitignore](.gitignore).
 - Do not commit local model files in the `models/` folder. They are excluded in [.gitignore](.gitignore).
+
+## Data Source Notes
+
+- Default source: `data/FAQ.docx`
+- Optional utility: [data/create_sample_data.py](data/create_sample_data.py) (not used in the default FAQ pipeline)
 
 ## Upload to GitHub
 

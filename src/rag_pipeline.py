@@ -37,8 +37,8 @@ class RAGChatbot:
         if self._is_greeting_or_smalltalk(user_query):
             return RAGResponse(
                 answer=(
-                    "Hello. Ask a specific question about the lesson-learned knowledge base, "
-                    "for example: 'What happens when SOE does not specify the leak test requirement?'"
+                    "Hi! Ask a specific question about the FAQ knowledge base, "
+                    "for example: 'Bagaimana saya nak menukar kata laluan?'"
                 ),
                 retrieved_chunks=[],
             )
@@ -67,8 +67,8 @@ class RAGChatbot:
 
         if not fields and self._is_low_information_query(user_query):
             return (
-                "Please ask a more specific question about the lesson-learned knowledge base. "
-                "For example: 'What is the impact when SOE does not specify the leak test requirement?'"
+                "Please ask a more specific question about the FAQ knowledge base. "
+                "For example: 'Bagaimana saya nak membatalkan langganan bulanan TontonUp saya?'"
             )
 
         direct_answer = self._compose_direct_answer(user_query, fields)
@@ -91,9 +91,9 @@ class RAGChatbot:
         )
 
     def _combine_chunks_by_top_row(self, retrieved_chunks: list[RetrievedChunk]) -> str:
-        top_row = retrieved_chunks[0].metadata.get("row_index")
+        top_row = self._group_key(retrieved_chunks[0])
         same_row_chunks = [
-            chunk for chunk in retrieved_chunks if chunk.metadata.get("row_index") == top_row
+            chunk for chunk in retrieved_chunks if self._group_key(chunk) == top_row
         ]
         same_row_chunks.sort(key=lambda chunk: chunk.metadata.get("chunk_index", 0))
         return " ".join(self._clean_text(chunk.text) for chunk in same_row_chunks)
@@ -103,9 +103,9 @@ class RAGChatbot:
     ) -> dict[str, str]:
         """Extract structured fields by scanning each chunk and keeping the longest value."""
         merged: dict[str, str] = {}
-        top_row = retrieved_chunks[0].metadata.get("row_index")
+        top_row = self._group_key(retrieved_chunks[0])
         same_row = sorted(
-            [c for c in retrieved_chunks if c.metadata.get("row_index") == top_row],
+            [c for c in retrieved_chunks if self._group_key(c) == top_row],
             key=lambda c: c.metadata.get("chunk_index", 0),
         )
         for chunk in same_row:
@@ -114,6 +114,13 @@ class RAGChatbot:
                 if value and len(value) > len(merged.get(key, "")):
                     merged[key] = value
         return merged
+
+    def _group_key(self, chunk: RetrievedChunk) -> str | int | None:
+        if "row_index" in chunk.metadata:
+            return chunk.metadata.get("row_index")
+        if "faq_index" in chunk.metadata:
+            return chunk.metadata.get("faq_index")
+        return chunk.metadata.get("chunk_index")
 
     def _extract_structured_fields(self, text: str) -> dict[str, str]:
         cleaned = self._clean_text(text)
@@ -149,6 +156,12 @@ class RAGChatbot:
             "severity": r"severity:\s*(.*?)(?=date:|equipment_tag:|$)",
         }
 
+        # Schema C: FAQ DOCX format (Question/Answer)
+        schema_c = {
+            "faq_question": r"Question:\s*(.*?)(?=Answer:|$)",
+            "faq_answer": r"Answer:\s*(.*)$",
+        }
+
         for key, pattern in schema_a.items():
             match = re.search(pattern, cleaned, flags=re.IGNORECASE)
             if match:
@@ -161,6 +174,12 @@ class RAGChatbot:
                 if match:
                     extracted.setdefault(key, self._clean_text(match.group(1)))
 
+        if not any(extracted.get(k) for k in ("cause", "consequence", "problem", "title")):
+            for key, pattern in schema_c.items():
+                match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+                if match:
+                    extracted.setdefault(key, self._clean_text(match.group(1)))
+
         return extracted
 
     def _compose_direct_answer(self, user_query: str, fields: dict[str, str]) -> str:
@@ -169,6 +188,8 @@ class RAGChatbot:
         solution = fields.get("solution", "")
         problem = fields.get("problem", "")
         title = fields.get("title", "")
+        faq_question = fields.get("faq_question", "")
+        faq_answer = fields.get("faq_answer", "")
 
         query = user_query.lower().strip()
 
@@ -211,9 +232,15 @@ class RAGChatbot:
         if title:
             return f"The most relevant lesson learned is: '{title}'."
 
+        if faq_answer:
+            return faq_answer
+
+        if faq_question:
+            return f"The most relevant FAQ found is: '{faq_question}'."
+
         return (
             "I found some related content, but not enough structured evidence to answer clearly. "
-            "Please ask a more specific question about the lesson learned data."
+            "Please ask a more specific question about the FAQ data."
         )
 
     def _format_structured_evidence(
@@ -232,6 +259,10 @@ class RAGChatbot:
             evidence_lines.append(f"- Corrective action: {fields['solution']}")
         if fields.get("severity"):
             evidence_lines.append(f"- Severity: {fields['severity']}")
+        if fields.get("faq_question"):
+            evidence_lines.append(f"- FAQ question: {fields['faq_question']}")
+        if fields.get("faq_answer"):
+            evidence_lines.append(f"- FAQ answer: {fields['faq_answer']}")
 
         if not evidence_lines:
             return evidence_lines

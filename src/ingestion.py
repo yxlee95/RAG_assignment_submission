@@ -1,19 +1,20 @@
 from __future__ import annotations
 
 from pathlib import Path
+from zipfile import ZipFile
+import xml.etree.ElementTree as ET
 
 import pandas as pd
-
-from data.create_sample_data import ensure_sample_data
 
 from .types import Document
 
 
-SUPPORTED_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+SUPPORTED_EXTENSIONS = {".docx", ".csv", ".xlsx", ".xls"}
 
 
 def resolve_input_file(data_dir: Path) -> Path:
     preferred = [
+        data_dir / "FAQ.docx",
         data_dir / "sample_lessons.xlsx",
         data_dir / "sample_lessons.csv",
         data_dir / "Lesson_Learned_Sample.csv",
@@ -24,16 +25,81 @@ def resolve_input_file(data_dir: Path) -> Path:
         if file_path.exists():
             return file_path
 
-    sample_file = ensure_sample_data()
-    if sample_file.exists():
-        return sample_file
-
     candidates = [p for p in data_dir.iterdir() if p.suffix.lower() in SUPPORTED_EXTENSIONS]
     if not candidates:
         raise FileNotFoundError(
-            f"No supported data files found in {data_dir}. Expected CSV or Excel files."
+            f"No supported data files found in {data_dir}. Expected DOCX, CSV, or Excel files."
         )
     return sorted(candidates)[0]
+
+
+def _load_docx_paragraphs(file_path: Path) -> list[str]:
+    with ZipFile(file_path) as archive:
+        xml_bytes = archive.read("word/document.xml")
+
+    root = ET.fromstring(xml_bytes)
+    namespace = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
+    paragraphs: list[str] = []
+
+    for paragraph in root.findall(".//w:p", namespace):
+        texts = [node.text for node in paragraph.findall(".//w:t", namespace) if node.text]
+        line = "".join(texts).strip()
+        if line:
+            paragraphs.append(line)
+
+    return paragraphs
+
+
+def _load_docx_documents(file_path: Path) -> list[Document]:
+    paragraphs = _load_docx_paragraphs(file_path)
+    documents: list[Document] = []
+
+    current_question: str | None = None
+    current_answer_lines: list[str] = []
+    faq_index = 0
+
+    def flush_pair() -> None:
+        nonlocal current_question, current_answer_lines, faq_index
+        if not current_question:
+            return
+
+        answer_text = " ".join(current_answer_lines).strip()
+        full_text = f"Question: {current_question}\nAnswer: {answer_text}".strip()
+        documents.append(
+            Document(
+                text=full_text,
+                metadata={
+                    "source_file": file_path.name,
+                    "faq_index": faq_index,
+                    "question": current_question,
+                },
+            )
+        )
+        faq_index += 1
+        current_question = None
+        current_answer_lines = []
+
+    for line in paragraphs:
+        normalized = line.strip()
+        lower = normalized.lower()
+
+        if lower.startswith("question:"):
+            flush_pair()
+            current_question = normalized.split(":", 1)[1].strip()
+            current_answer_lines = []
+            continue
+
+        if lower.startswith("answer:"):
+            answer_start = normalized.split(":", 1)[1].strip()
+            if answer_start:
+                current_answer_lines.append(answer_start)
+            continue
+
+        if current_question:
+            current_answer_lines.append(normalized)
+
+    flush_pair()
+    return documents
 
 
 def _load_dataframe(file_path: Path) -> pd.DataFrame:
@@ -46,6 +112,9 @@ def _load_dataframe(file_path: Path) -> pd.DataFrame:
 
 
 def load_documents(file_path: Path) -> list[Document]:
+    if file_path.suffix.lower() == ".docx":
+        return _load_docx_documents(file_path)
+
     df = _load_dataframe(file_path)
     df = df.fillna("")
 
