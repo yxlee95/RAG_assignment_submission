@@ -2,21 +2,41 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.config import AppConfig
+from src.chunking import chunk_documents
+from src.config import AppConfig, ensure_storage_dir
 from src.embeddings import EmbeddingModel
+from src.ingestion import load_documents, resolve_input_file
 from src.llm_client import GeminiClient
 from src.rag_pipeline import RAGChatbot
 from src.vector_store import NumpyVectorStore
 
 
+def ensure_index_exists(config: AppConfig, embedding_model: EmbeddingModel) -> None:
+    ensure_storage_dir(config.storage_dir)
+
+    if config.index_vectors_path.exists() and config.index_records_path.exists():
+        return
+
+    input_file = resolve_input_file(config.data_dir)
+    documents = load_documents(input_file)
+    chunks = chunk_documents(documents, chunk_size=500, chunk_overlap=80)
+    vectors = embedding_model.encode([doc.text for doc in chunks])
+
+    store = NumpyVectorStore()
+    store.build(vectors=vectors, documents=chunks)
+    store.save(config.index_vectors_path, config.index_records_path)
+
+
 @st.cache_resource(show_spinner=False)
 def get_chatbot() -> RAGChatbot:
     config = AppConfig()
+    embedding_model = EmbeddingModel(config.embedding_model)
+
+    ensure_index_exists(config, embedding_model)
 
     store = NumpyVectorStore()
     store.load(config.index_vectors_path, config.index_records_path)
 
-    embedding_model = EmbeddingModel(config.embedding_model)
     llm_client = GeminiClient(
         api_key=config.gemini_api_key,
         model=config.gemini_model,
@@ -35,7 +55,7 @@ def get_chatbot() -> RAGChatbot:
 def main() -> None:
     st.set_page_config(page_title="RAG Chatbot Assessment", page_icon="💬", layout="centered")
     st.title("💬 Recruitment Assessment: RAG Chatbot")
-    st.caption("Knowledge base: Lesson_Learned_Sample data file")
+    st.caption("Knowledge base: FAQ.docx")
 
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -44,7 +64,7 @@ def main() -> None:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    user_query = st.chat_input("Ask a question about the lesson learned data")
+    user_query = st.chat_input("Ask a question about the FAQ data")
     if not user_query:
         return
 
@@ -56,7 +76,7 @@ def main() -> None:
         chatbot = get_chatbot()
     except Exception as exc:
         error_msg = (
-            "Initialization failed. Ensure index files exist and GEMINI_API_KEY is set.\n\n"
+            "Initialization failed. Ensure GEMINI_API_KEY is set and FAQ data is available.\n\n"
             f"Error: {exc}"
         )
         with st.chat_message("assistant"):
@@ -80,8 +100,10 @@ def main() -> None:
             with st.expander("Retrieved Context"):
                 for i, chunk in enumerate(result.retrieved_chunks, start=1):
                     source = chunk.metadata.get("source_file", "unknown")
-                    row = chunk.metadata.get("row_index", "N/A")
-                    st.markdown(f"**Chunk {i}** | source: {source} | row: {row} | score: {chunk.score:.4f}")
+                    row = chunk.metadata.get("row_index", chunk.metadata.get("faq_index", "N/A"))
+                    st.markdown(
+                        f"**Chunk {i}** | source: {source} | row/faq: {row} | score: {chunk.score:.4f}"
+                    )
                     st.write(chunk.text)
 
     st.session_state.messages.append({"role": "assistant", "content": result.answer})
