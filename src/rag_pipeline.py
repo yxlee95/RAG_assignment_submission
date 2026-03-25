@@ -319,7 +319,7 @@ class RAGChatbot:
                 best_answer = faq_answer
 
         if best_similarity >= 0.78 and best_question and best_answer:
-            return f"Question: {best_question}\nAnswer:\n{best_answer}"
+            return best_answer
 
         return None
 
@@ -358,7 +358,7 @@ class RAGChatbot:
         if best.score < score_threshold:
             return None
 
-        return f"Question: {faq_question}\nAnswer:\n{faq_answer}"
+        return faq_answer
 
     def _normalize_for_match(self, text: str) -> str:
         return re.sub(r"\s+", " ", text.lower()).strip()
