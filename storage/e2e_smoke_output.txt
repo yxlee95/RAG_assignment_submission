@@ -1,0 +1,5 @@
+Q: Bagaimana saya nak menukar kata laluan?
+A: Anda boleh menetapkan semula kata laluan anda, kemudian log masuk semula. Anda boleh menggunakan pautan yang disediakan untuk menetapkan semula kata laluan akaun anda.
+
+*   Chunk 1
+Top metadata: {'source_file': 'FAQ.docx', 'faq_index': 3, 'question': 'Bagaimana saya nak menukar kata laluan?', 'chunk_index': 0, 'total_chunks': 1}
