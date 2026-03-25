@@ -72,6 +72,8 @@ def _load_docx_documents(file_path: Path) -> list[Document]:
                     "source_file": file_path.name,
                     "faq_index": faq_index,
                     "question": current_question,
+                    "answer": answer_text,
+                    "faq_full_text": full_text,
                 },
             )
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
+from difflib import SequenceMatcher
 
 from .embeddings import EmbeddingModel
 from .guardrails import SAFE_FAILURE_MESSAGE, is_blocked_prompt
@@ -43,8 +44,18 @@ class RAGChatbot:
                 retrieved_chunks=[],
             )
 
+        corpus_faq_answer = self._find_corpus_faq_answer(user_query)
+        if corpus_faq_answer:
+            query_vector = self.embedding_model.encode([user_query])[0]
+            retrieved_chunks = self.vector_store.search(query_vector, top_k=self.top_k)
+            return RAGResponse(answer=corpus_faq_answer, retrieved_chunks=retrieved_chunks)
+
         query_vector = self.embedding_model.encode([user_query])[0]
         retrieved_chunks = self.vector_store.search(query_vector, top_k=self.top_k)
+
+        direct_faq_answer = self._build_direct_faq_answer(user_query, retrieved_chunks)
+        if direct_faq_answer:
+            return RAGResponse(answer=direct_faq_answer, retrieved_chunks=retrieved_chunks)
 
         prompt = build_rag_prompt(user_query=user_query, chunks=retrieved_chunks)
         try:
@@ -268,6 +279,92 @@ class RAGChatbot:
             return evidence_lines
 
         return evidence_lines
+
+    def _find_corpus_faq_answer(self, user_query: str) -> str | None:
+        query_normalized = self._normalize_for_match(user_query)
+        query_tokens = self._match_tokens(query_normalized)
+        if not query_tokens:
+            return None
+
+        best_question = ""
+        best_answer = ""
+        best_similarity = 0.0
+
+        for record in self.vector_store.records:
+            metadata = record.get("metadata", {})
+            faq_question = str(metadata.get("question", "")).strip()
+            faq_answer = str(metadata.get("answer", "")).strip()
+
+            if not faq_question or not faq_answer:
+                text = str(record.get("text", ""))
+                fields = self._extract_structured_fields(text)
+                faq_question = fields.get("faq_question", "").strip()
+                faq_answer = fields.get("faq_answer", "").strip()
+
+            if not faq_question or not faq_answer:
+                continue
+
+            question_normalized = self._normalize_for_match(faq_question)
+            question_tokens = self._match_tokens(question_normalized)
+            if not question_tokens:
+                continue
+
+            overlap = len(query_tokens & question_tokens) / max(len(query_tokens), 1)
+            seq = SequenceMatcher(None, query_normalized, question_normalized).ratio()
+            score = max(overlap, seq)
+
+            if score > best_similarity:
+                best_similarity = score
+                best_question = faq_question
+                best_answer = faq_answer
+
+        if best_similarity >= 0.78 and best_question and best_answer:
+            return f"Question: {best_question}\nAnswer:\n{best_answer}"
+
+        return None
+
+    def _build_direct_faq_answer(
+        self, user_query: str, retrieved_chunks: list[RetrievedChunk]
+    ) -> str | None:
+        if not retrieved_chunks:
+            return None
+
+        best = retrieved_chunks[0]
+        if "faq_index" not in best.metadata:
+            return None
+
+        faq_question = str(best.metadata.get("question", "")).strip()
+        faq_answer = str(best.metadata.get("answer", "")).strip()
+
+        if not faq_question or not faq_answer:
+            fields = self._extract_structured_fields_from_chunks(retrieved_chunks)
+            faq_question = fields.get("faq_question", "").strip()
+            faq_answer = fields.get("faq_answer", "").strip()
+
+        if not faq_question or not faq_answer:
+            return None
+
+        question_similarity = SequenceMatcher(
+            None,
+            self._normalize_for_match(user_query),
+            self._normalize_for_match(faq_question),
+        ).ratio()
+
+        score_threshold = 0.35
+        similarity_threshold = 0.82
+        if question_similarity < similarity_threshold:
+            return None
+
+        if best.score < score_threshold:
+            return None
+
+        return f"Question: {faq_question}\nAnswer:\n{faq_answer}"
+
+    def _normalize_for_match(self, text: str) -> str:
+        return re.sub(r"\s+", " ", text.lower()).strip()
+
+    def _match_tokens(self, text: str) -> set[str]:
+        return set(re.findall(r"[a-zA-Z0-9]+", text.lower()))
 
     def _is_greeting_or_smalltalk(self, user_query: str) -> bool:
         normalized = user_query.strip().lower()
